@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 11.00
+# Visual Studio 2010
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Assembly-CSharp", "Assembly-CSharp.csproj", "{0a7792eb-385b-6a91-f470-4e943b3dda41}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DOTween.Modules", "DOTween.Modules.csproj", "{2b2072bf-0fb6-8e96-9088-524bf64af4de}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Assembly-CSharp-firstpass", "Assembly-CSharp-firstpass.csproj", "{bf1f049c-4cce-1472-bf72-0566fff162ee}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{0a7792eb-385b-6a91-f470-4e943b3dda41}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0a7792eb-385b-6a91-f470-4e943b3dda41}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2b2072bf-0fb6-8e96-9088-524bf64af4de}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2b2072bf-0fb6-8e96-9088-524bf64af4de}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{bf1f049c-4cce-1472-bf72-0566fff162ee}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{bf1f049c-4cce-1472-bf72-0566fff162ee}.Debug|Any CPU.Build.0 = Debug|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
