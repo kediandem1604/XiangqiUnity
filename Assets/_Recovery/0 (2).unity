@@ -1033,18 +1033,6 @@ BoxCollider:
   serializedVersion: 3
   m_Size: {x: 2, y: 0.5, z: 2}
   m_Center: {x: 0, y: 0, z: 10.799999}
---- !u!114 &1140132839
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 919132148970396536}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 107b0ea6d8fb4294983a59a757450738, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::AutoAttachPieceController
 --- !u!114 &1140132840
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1057,9 +1045,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f01c79ff283af2c43a8306bb09292c3f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BoardController
-  redToMove: 1
-  fenFlipFiles: 0
-  fenFlipRanks: 0
+  redToMove: 0
 --- !u!114 &1171969988
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1991,7 +1977,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 543450652709601730}
-  - component: {fileID: 1140132839}
   - component: {fileID: 1140132840}
   - component: {fileID: 919132148970396537}
   - component: {fileID: 919132148970396539}
@@ -2060,7 +2045,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 18ca847cf07528a43804727cc3c76a7a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::EngineController
-  moveTimeMs: 1000
+  depth: 12
+  rankOffset: 0
+  fileOffset: 0
 --- !u!1 &924949558921924894
 GameObject:
   m_ObjectHideFlags: 0

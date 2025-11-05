@@ -11,11 +11,8 @@ public partial class BoardController : MonoBehaviour
     
     private PieceController _selectedPiece;
     private readonly Dictionary<(int, int), PieceController> _pieces = new Dictionary<(int, int), PieceController>();
-    [Header("Side to move (Red starts)")]
-    public bool redToMove = true;
-    [Header("FEN Orientation")]
-    public bool fenFlipFiles = false; // đảo chiều cột a↔i khi xuất FEN
-    public bool fenFlipRanks = false; // đảo trên↔dưới khi xuất FEN
+    [Header("Side to move (Black starts)")]
+    public bool redToMove = false;  // Đen đi trước (false = đen, true = đỏ)
     
     // Track original Y position khi select
     private Dictionary<PieceController, Vector3> _originalPositions = new Dictionary<PieceController, Vector3>();
@@ -35,8 +32,13 @@ public partial class BoardController : MonoBehaviour
         
         InitializePieces();
 
-        // Phân tích ngay khi Play
-        AnalyzeCurrentPosition();
+        // Phân tích ngay khi Play (dùng AnalyzeAfterMove từ EngineController)
+        var eng = GetComponent<EngineController>();
+        if (eng != null)
+        {
+            string fen = GenerateFen();
+            eng.AnalyzeAfterMove(fen, null);
+        }
     }
     
     void InitializePieces()
@@ -193,8 +195,13 @@ public partial class BoardController : MonoBehaviour
         // Đổi lượt đi
         redToMove = !redToMove;
 
-        // Gọi lại engine để phân tích board mới
-        AnalyzeCurrentPosition();
+        // Gọi lại engine để phân tích board mới (dùng AnalyzeAfterMove từ EngineController)
+        var eng = GetComponent<EngineController>();
+        if (eng != null)
+        {
+            string fen = GenerateFen();
+            eng.AnalyzeAfterMove(fen, null);
+        }
 
         return true;
     }
@@ -222,8 +229,8 @@ public partial class BoardController
             int empty = 0;
             for (int ff = 0; ff <= 8; ff++)
             {
-                int r = fenFlipRanks ? (9 - rr) : rr;
-                int f = fenFlipFiles ? (8 - ff) : ff;
+                int r = rr;
+                int f = ff;
                 if (_pieces.TryGetValue((f, r), out var p) && p != null)
                 {
                     if (empty > 0)
@@ -261,17 +268,11 @@ public partial class BoardController
             case PieceController.PieceType.Cannon: c = 'c'; break;
             case PieceController.PieceType.Pawn: c = 'p'; break;
         }
-        // Đỏ thường, Đen in hoa
-        if (!p.isRed) c = char.ToUpperInvariant(c);
+        // Đỏ in hoa, Đen thường (quy định mới: lowercase = đen, uppercase = đỏ)
+        if (p.isRed) c = char.ToUpperInvariant(c);
         return c;
     }
 
-    void AnalyzeCurrentPosition()
-    {
-        var eng = GetComponent<EngineController>();
-        if (eng == null) { Debug.LogWarning("[BoardController] EngineController not found on ChessBoard"); return; }
-        string fen = GenerateFen();
-        Debug.Log($"[BoardController] Analyze FEN: {fen}");
-        eng.RequestBestMoveByFen(fen, null);
-    }
+    // Đã xóa AnalyzeCurrentPosition() - chỉ dùng AnalyzeAfterMove() từ EngineController
+    // để tránh duplicate calls và đảm bảo side to move đúng
 }

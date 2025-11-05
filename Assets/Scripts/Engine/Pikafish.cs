@@ -36,7 +36,8 @@ public class Pikafish : MonoBehaviour
 #if UNITY_IOS && !UNITY_EDITOR
     const string LIB = "__Internal";
 #else
-    const string LIB = "pikafish"; // pikafish.dll / libpikafish.so
+    // Khớp tuyệt đối với file hiện có trong Plugins: pikafish.dll
+    const string LIB = "pikafish";
 #endif
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -55,12 +56,43 @@ public class Pikafish : MonoBehaviour
     [DllImport(LIB, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)] static extern int pika_go_depth(int depth);
     [DllImport(LIB, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)] static extern int pika_go_infinite();
     [DllImport(LIB, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)] static extern int pika_stop();
-    // Dùng delegate trực tiếp thay vì IntPtr (Marshaller sẽ tự convert)
+    // Threads freeze API (bắt buộc gọi một lần sau init)
+    [DllImport(LIB, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)] static extern int pika_init_threads(int threads);
+    [DllImport(LIB, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)] static extern int pika_is_threads_frozen();
+    
+    // ====== POLLING MESSAGE QUEUE API (thay thế callbacks) ======
+    public enum PikaMsgType : uint
+    {
+        PIKA_MSG_INFO = 1,
+        PIKA_MSG_BESTMOVE = 2
+    }
+    
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+    public struct PikaMsg
+    {
+        public uint type;      // PikaMsgType
+        public uint reserved;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)]
+        public string a;        // bestmove
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
+        public string b;        // info string hoặc ponder
+    }
+    
+    [DllImport(LIB, CallingConvention = CallingConvention.Cdecl)] 
+    static extern int pika_poll_messages([Out] PikaMsg[] outArray, int outLen);
+    
+    [DllImport(LIB, CallingConvention = CallingConvention.Cdecl)] 
+    static extern void pika_clear_messages();
+    
+    [DllImport(LIB, CallingConvention = CallingConvention.Cdecl)] 
+    static extern int pika_is_searching();
+    
+    // Callback API cũ (deprecated, chỉ dùng để backward compatibility nếu cần)
     [DllImport(LIB, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)] static extern void pika_set_info_callback(InfoCb cb);
     [DllImport(LIB, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)] static extern void pika_set_bestmove_callback(BestMoveCb cb);
     [DllImport(LIB, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)] static extern void pika_set_callbacks(InfoCb infoCb, BestMoveCb bestmoveCb);
     [DllImport(LIB, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)] static extern void pika_emit_test_callbacks();
-    [DllImport(LIB, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)] static extern int pika_get_callback_state(); // Returns: 0=none, 1=info only, 2=bestmove only, 3=both
+    [DllImport(LIB, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)] static extern int pika_get_callback_state();
 
     // Static delegates với GCHandle để giữ lifetime suốt quá trình chạy
     // Pattern: static field + GCHandle.Alloc để delegate không bị GC
@@ -121,7 +153,6 @@ public class Pikafish : MonoBehaviour
 
     void Awake()
     {
-        Debug.Log("[Pikafish] Awake() started");
         
         // Kill duplicates - singleton pattern bulletproof
         if (_instance != null && _instance != this)
@@ -143,16 +174,12 @@ public class Pikafish : MonoBehaviour
         // Đợi frame đầu để Unity hoàn tất initialization
         yield return null;
         
-        Debug.Log("[Pikafish] Starting delayed init...");
-        
-        // Initialize native engine
+        // Initialize native engine (im lặng nếu thành công)
         int init = 0;
         try 
         { 
-            Debug.Log("[Pikafish] Calling pika_init()...");
             init = pika_init();
             _nativeReady = (init == 1);
-            Debug.Log($"[Pikafish] pika_init() returned: {init}, _nativeReady={_nativeReady}");
         }
         catch (System.DllNotFoundException ex) 
         { 
@@ -181,19 +208,47 @@ public class Pikafish : MonoBehaviour
             yield break;
         }
 
-        // Pin delegate và set callbacks
-        _callbacksReady = SetCallbacks();
-        
-        if (_callbacksReady)
+        // Polling-based: không cần set callbacks nữa (native push vào queue)
+        _callbacksReady = true;
+
+        // Thiết lập biến thể và cấu hình UCI cho cờ tướng
+        try
         {
-            Debug.Log($"[Pikafish] Initialization complete! IsReady={IsReady}");
+            // Thiết lập UCI tối thiểu cho Xiangqi
+            SetOption("UCI_Variant", "xiangqi");
+            SetOption("Hash", "128");
+            int desiredThreads = Mathf.Clamp(System.Environment.ProcessorCount, 1, 32);
+            SetOption("Threads", desiredThreads.ToString());
+            // EvalFile: load từ StreamingAssets (iOS-compatible)
+            string evalPath = GetEvalFilePath();
+            SetOption("EvalFile", evalPath);
+            // Hiển thị WDL trong info
+            SetOption("UCI_ShowWDL", "true");
+            // Xoá hash để tránh nhiễm trạng thái cũ
+            SetOption("Clear Hash", "");
         }
-        else
+        catch (System.Exception ex)
         {
-            Debug.LogError("[Pikafish] Callback setup failed!");
+            Debug.LogWarning($"[Pikafish] SetOption (xiangqi defaults) failed: {ex.Message}");
         }
 
-        Debug.Log($"[Pikafish] Awake completed, _nativeReady={_nativeReady}, _callbacksReady={_callbacksReady}, IsReady={IsReady}");
+        // Freeze threads ngay sau khi init (yêu cầu của native)
+        try
+        {
+            // Đồng bộ số thread với option đã set ở trên
+            int threads = Mathf.Clamp(System.Environment.ProcessorCount, 1, 32);
+            int fr = pika_init_threads(threads);
+            if (fr != 1)
+            {
+                Debug.LogWarning("[Pikafish] pika_init_threads did not return 1; searches may fail");
+            }
+        }
+        catch (System.EntryPointNotFoundException)
+        {
+            Debug.LogWarning("[Pikafish] pika_init_threads not found in DLL (old build?)");
+        }
+        
+        if (!_callbacksReady) Debug.LogError("[Pikafish] Initialization failed (callbacks not ready)");
     }
 
     // Helper method để set callbacks (dùng lại trong DelayedInit và RebindCallbacksAfterReload)
@@ -312,11 +367,11 @@ public class Pikafish : MonoBehaviour
         if (_instance != this) return;
         
         try 
-        { 
+        {
             // Xóa callbacks ở DLL trước khi dừng engine để tránh thread nền gọi vào delegate đã thu dọn
             try { pika_set_info_callback(null); } catch {}
             try { pika_set_bestmove_callback(null); } catch {}
-        } 
+        }
         catch {}
         
         try { pika_stop(); } catch {}
@@ -331,6 +386,34 @@ public class Pikafish : MonoBehaviour
     }
 
     // Các API public đơn giản
+    /// <summary>
+    /// Lấy đường dẫn NNUE file (cross-platform, iOS-compatible).
+    /// Engine không embed NNUE trong DLL, phải load từ file system.
+    /// </summary>
+    private string GetEvalFilePath()
+    {
+        // Ưu tiên: StreamingAssets/nn/pikafish.nnue (iOS/Android bundle)
+        string streamingPath = System.IO.Path.Combine(Application.streamingAssetsPath, "nn", "pikafish.nnue");
+        
+#if UNITY_ANDROID && !UNITY_EDITOR
+        // Android: StreamingAssets có thể cần extract từ APK
+        // Unity tự xử lý, nhưng cần dùng full path
+        if (System.IO.File.Exists(streamingPath))
+            return streamingPath;
+#elif UNITY_IOS && !UNITY_EDITOR
+        // iOS: StreamingAssets bundle vào app, đọc được trực tiếp
+        if (System.IO.File.Exists(streamingPath))
+            return streamingPath;
+#else
+        // Editor/Windows: StreamingAssets hoặc fallback bên cạnh DLL
+        if (System.IO.File.Exists(streamingPath))
+            return streamingPath;
+#endif
+        
+        // Fallback: file bên cạnh DLL (Windows) hoặc tên file đơn giản (engine tự tìm)
+        return "pikafish.nnue";
+    }
+    
     public void SetOption(string key, string value)
     {
         try
@@ -347,8 +430,9 @@ public class Pikafish : MonoBehaviour
                 {
                     var exists = System.IO.File.Exists(value);
                     long size = exists ? new System.IO.FileInfo(value).Length : 0;
-                    Debug.Log($"[Pikafish] SetOption EvalFile='{value}' exists={exists} size={size} bytes (persistent={UnityEngine.Application.persistentDataPath})");
                     EvalReady = exists && size > 0;
+                    if (!EvalReady)
+                        Debug.LogWarning($"[Pikafish] EvalFile not found: {value}");
                 }
                 catch (System.Exception ex)
                 {
@@ -367,12 +451,27 @@ public class Pikafish : MonoBehaviour
     {
         try
         {
-            bool isStartPos = string.Equals(fen, "startpos", System.StringComparison.OrdinalIgnoreCase);
+            // KHÔNG force side to move - để EngineController quyết định side to move đúng
+            // Chỉ đảm bảo FEN có side to move hợp lệ
+            string fenFixed = fen;
+            if (string.IsNullOrWhiteSpace(fenFixed))
+                fenFixed = "startpos";
+            
+            // Chỉ thêm side to move nếu thiếu, không force 'b' hay 'w'
+            if (!fenFixed.Contains(" w ") && !fenFixed.Contains(" b ") && !fenFixed.Equals("startpos", System.StringComparison.OrdinalIgnoreCase))
+            {
+                if (fenFixed.EndsWith(" -"))
+                    fenFixed = fenFixed.Replace(" -", " b -");
+                else
+                    fenFixed += " b - - 0 1";
+            }
+            
+            bool isStartPos = string.Equals(fenFixed, "startpos", System.StringComparison.OrdinalIgnoreCase);
             string cmd = string.IsNullOrEmpty(movesCsv)
-                ? (isStartPos ? "position startpos" : $"position fen {fen}")
-                : (isStartPos ? $"position startpos moves {movesCsv}" : $"position fen {fen} moves {movesCsv}");
+                ? (isStartPos ? "position startpos" : $"position fen {fenFixed}")
+                : (isStartPos ? $"position startpos moves {movesCsv}" : $"position fen {fenFixed} moves {movesCsv}");
             Debug.Log($"[Pikafish] {cmd}");
-            pika_position_fen(fen ?? "startpos", movesCsv);
+            pika_position_fen(fenFixed ?? "startpos", movesCsv);
         }
         catch (System.Exception ex)
         {
@@ -419,10 +518,11 @@ public class Pikafish : MonoBehaviour
             return;
         }
         
+        if (depth < 1) depth = 1;
         try 
         { 
             Debug.Log($"[Pikafish] go depth {depth}"); 
-            int ret =  (depth);
+            int ret = pika_go_depth(depth);
             if (ret == 0)
             {
                 Debug.LogWarning($"[Pikafish] pika_go_depth returned 0 - engine busy or callbacks not set");
@@ -515,8 +615,27 @@ public class Pikafish : MonoBehaviour
         }
     }
 
+    // Buffer để poll messages từ native queue
+    private PikaMsg[] _messageBuffer = new PikaMsg[128];
+    
     void Update()
     {
+        // Poll messages từ native queue (polling-based, không cần callbacks)
+        int messagesRead = pika_poll_messages(_messageBuffer, _messageBuffer.Length);
+        for (int i = 0; i < messagesRead; i++)
+        {
+            var msg = _messageBuffer[i];
+            if (msg.type == (uint)PikaMsgType.PIKA_MSG_INFO)
+            {
+                OnInfo?.Invoke(msg.b ?? "");
+            }
+            else if (msg.type == (uint)PikaMsgType.PIKA_MSG_BESTMOVE)
+            {
+                OnBestMove?.Invoke(msg.a ?? "", msg.b ?? "");
+            }
+        }
+        
+        // Giữ backward compatibility với callback-based system (nếu có)
         while (_infoQueue.TryDequeue(out var line)) OnInfo?.Invoke(line);
         while (_bmQueue.TryDequeue(out var bm)) OnBestMove?.Invoke(bm.best, bm.ponder);
     }
