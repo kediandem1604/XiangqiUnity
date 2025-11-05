@@ -45,9 +45,11 @@ public static class MoveValidator
         int rankAbs = Mathf.Abs(toRank - fromRank);
         if (!((fileAbs == 1 && rankAbs == 0) || (fileAbs == 0 && rankAbs == 1))) return false;
         if (piece.isRed)
-            return toRank >= 7 && toRank <= 9 && toFile >= 3 && toFile <= 5;
-        else
+            // Đỏ ở DƯỚI: cung dưới (ranks 0..2)
             return toRank >= 0 && toRank <= 2 && toFile >= 3 && toFile <= 5;
+        else
+            // Đen ở TRÊN: cung trên (ranks 7..9)
+            return toRank >= 7 && toRank <= 9 && toFile >= 3 && toFile <= 5;
     }
 
     // ==================== ADVISOR (Sĩ) ====================
@@ -58,9 +60,9 @@ public static class MoveValidator
         int rankAbs = Mathf.Abs(toRank - fromRank);
         if (fileAbs != 1 || rankAbs != 1) return false;
         if (piece.isRed)
-            return toRank >= 7 && toRank <= 9 && toFile >= 3 && toFile <= 5;
-        else
             return toRank >= 0 && toRank <= 2 && toFile >= 3 && toFile <= 5;
+        else
+            return toRank >= 7 && toRank <= 9 && toFile >= 3 && toFile <= 5;
     }
 
     // ==================== ELEPHANT (Tượng) ====================
@@ -74,8 +76,10 @@ public static class MoveValidator
         int eyeRank = fromRank + ((toRank - fromRank) / 2);
         if (board.GetPieceAt(eyeFile, eyeRank) != null) return false;
         bool isRed = piece.isRed;
-        if (isRed && toRank < 5) return false;
-        if (!isRed && toRank > 4) return false;
+        // Đỏ (dưới) không được qua sông (lên nửa trên: rank >= 5)
+        if (isRed && toRank >= 5) return false;
+        // Đen (trên) không được qua sông (xuống nửa dưới: rank <= 4)
+        if (!isRed && toRank <= 4) return false;
         return true;
     }
 
@@ -159,17 +163,20 @@ public static class MoveValidator
         int fileDiff = toFile - fromFile;
         int rankDiff = toRank - fromRank;
         bool isRed = piece.isRed;
-        bool crossedRiver = isRed ? (fromRank < 5) : (fromRank > 4);
+        // Đã qua sông? Đỏ khi rank >= 5, Đen khi rank <= 4
+        bool crossedRiver = isRed ? (fromRank >= 5) : (fromRank <= 4);
 
         if (isRed)
         {
-            if (rankDiff == -1 && fileDiff == 0) return true; // tiến lên
+            // Đỏ tiến lên phía TRÊN: rank tăng +1
+            if (rankDiff == 1 && fileDiff == 0) return true;
             if (crossedRiver && rankDiff == 0 && Mathf.Abs(fileDiff) == 1) return true; // đi ngang sau khi qua sông
             return false;
         }
         else
         {
-            if (rankDiff == 1 && fileDiff == 0) return true;
+            // Đen tiến xuống phía DƯỚI: rank giảm -1
+            if (rankDiff == -1 && fileDiff == 0) return true;
             if (crossedRiver && rankDiff == 0 && Mathf.Abs(fileDiff) == 1) return true;
             return false;
         }

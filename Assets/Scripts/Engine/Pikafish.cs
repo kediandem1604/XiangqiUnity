@@ -457,14 +457,8 @@ public class Pikafish : MonoBehaviour
             if (string.IsNullOrWhiteSpace(fenFixed))
                 fenFixed = "startpos";
             
-            // Chỉ thêm side to move nếu thiếu, không force 'b' hay 'w'
-            if (!fenFixed.Contains(" w ") && !fenFixed.Contains(" b ") && !fenFixed.Equals("startpos", System.StringComparison.OrdinalIgnoreCase))
-            {
-                if (fenFixed.EndsWith(" -"))
-                    fenFixed = fenFixed.Replace(" -", " b -");
-                else
-                    fenFixed += " b - - 0 1";
-            }
+            // Không ép side-to-move ở đây. Nếu FEN thiếu lượt đi, để nguyên
+            // (EngineController/BoardController sẽ cung cấp đúng side).
             
             bool isStartPos = string.Equals(fenFixed, "startpos", System.StringComparison.OrdinalIgnoreCase);
             string cmd = string.IsNullOrEmpty(movesCsv)

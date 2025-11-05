@@ -11,8 +11,8 @@ public partial class BoardController : MonoBehaviour
     
     private PieceController _selectedPiece;
     private readonly Dictionary<(int, int), PieceController> _pieces = new Dictionary<(int, int), PieceController>();
-    [Header("Side to move (Black starts)")]
-    public bool redToMove = false;  // Đen đi trước (false = đen, true = đỏ)
+    // Side to move cố định: RED starts
+    private bool redToMove = true;
     
     // Track original Y position khi select
     private Dictionary<PieceController, Vector3> _originalPositions = new Dictionary<PieceController, Vector3>();
@@ -31,13 +31,16 @@ public partial class BoardController : MonoBehaviour
         // không tự thêm/bind ở đây nữa.
         
         InitializePieces();
-
-        // Phân tích ngay khi Play (dùng AnalyzeAfterMove từ EngineController)
+        
+        // Reset move history khi bắt đầu ván mới (theo logic flutter_android)
         var eng = GetComponent<EngineController>();
         if (eng != null)
         {
+            eng.ResetMoveHistory();
+            
+            // Nước đầu: dùng FEN hiện tại, KHÔNG kèm moves
             string fen = GenerateFen();
-            eng.AnalyzeAfterMove(fen, null);
+            eng.AnalyzeAfterMove(fen, null, null);
         }
     }
     
@@ -162,6 +165,13 @@ public partial class BoardController : MonoBehaviour
     {
         if (_selectedPiece == null) return false;
 
+        // Gate lần nữa theo lượt đi để tránh trường hợp selection bị lọt
+        if ((_selectedPiece.isRed && !redToMove) || (!_selectedPiece.isRed && redToMove))
+        {
+            Debug.Log("Move blocked: not this side's turn");
+            return false;
+        }
+
         Debug.Log($"Moving {_selectedPiece.pieceType} from ({_selectedPiece.file}, {_selectedPiece.rank}) to ({targetFile}, {targetRank})");
 
         // Chỉ cho phép nếu hợp lệ
@@ -180,6 +190,12 @@ public partial class BoardController : MonoBehaviour
             CapturePiece(targetPiece);
         }
 
+        // Generate UCI move notation trước khi move (theo logic flutter_android)
+        // UCI: files a-i (0-8), ranks 0-9 (0=dưới, 9=trên) - KHÔNG FLIP
+        int fromFile = _selectedPiece.file;
+        int fromRank = _selectedPiece.rank;
+        string moveUci = GenerateUciMove(fromFile, fromRank, targetFile, targetRank);
+        
         // Cập nhật position trong dictionary
         _pieces.Remove((_selectedPiece.file, _selectedPiece.rank));
         _selectedPiece.file = targetFile;
@@ -196,11 +212,13 @@ public partial class BoardController : MonoBehaviour
         redToMove = !redToMove;
 
         // Gọi lại engine để phân tích board mới (dùng AnalyzeAfterMove từ EngineController)
+        // Truyền moveUci để track move history (theo logic flutter_android)
         var eng = GetComponent<EngineController>();
         if (eng != null)
         {
-            string fen = GenerateFen();
-            eng.AnalyzeAfterMove(fen, null);
+            // Sau mỗi nước: dùng FEN hiện tại (không kèm moves) + cập nhật history bằng lastMoveUci
+            string fenNow = GenerateFen();
+            eng.AnalyzeAfterMove(fenNow, null, moveUci);
         }
 
         return true;
@@ -222,7 +240,7 @@ public partial class BoardController
 {
     string GenerateFen()
     {
-        // Xiangqi FEN yêu cầu quét từ TRÊN XUỐNG (bên Đen trước).
+        // Xiangqi FEN yêu cầu quét từ TRÊN XUỐNG.
         System.Text.StringBuilder sb = new System.Text.StringBuilder();
         for (int rr = 9; rr >= 0; rr--)
         {
@@ -268,11 +286,34 @@ public partial class BoardController
             case PieceController.PieceType.Cannon: c = 'c'; break;
             case PieceController.PieceType.Pawn: c = 'p'; break;
         }
-        // Đỏ in hoa, Đen thường (quy định mới: lowercase = đen, uppercase = đỏ)
-        if (p.isRed) c = char.ToUpperInvariant(c);
+        // Chuẩn xiangqi/Stockfish: UPPERCASE = RED (dưới), lowercase = black (trên)
+        if (p.isRed)
+            c = char.ToUpperInvariant(c);
+        else
+            c = char.ToLowerInvariant(c);
         return c;
     }
 
     // Đã xóa AnalyzeCurrentPosition() - chỉ dùng AnalyzeAfterMove() từ EngineController
     // để tránh duplicate calls và đảm bảo side to move đúng
+    
+    /// <summary>
+    /// Generate UCI move notation từ Unity grid coordinates (theo logic flutter_android).
+    /// UCI: files a-i, ranks 0-9.
+    /// Unity: files 0-8, ranks 0-9.
+    /// KHÔNG FLIP khi gửi: dùng trực tiếp rank.
+    /// </summary>
+    string GenerateUciMove(int fromFile, int fromRank, int toFile, int toRank)
+    {
+        // Convert Unity file (0-8) → UCI file (a-i)
+        char fromFileChar = (char)('a' + fromFile);
+        char toFileChar = (char)('a' + toFile);
+        
+        // Convert Unity rank (0-9) → UCI rank (không flip)
+        int fromRankUci = fromRank;
+        int toRankUci = toRank;
+        
+        // Format: a0a9 (file + rank + file + rank)
+        return $"{fromFileChar}{fromRankUci}{toFileChar}{toRankUci}";
+    }
 }
