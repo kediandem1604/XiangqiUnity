@@ -46,7 +46,7 @@
     <Analyzer Include="D:\Unity\Hub\6000.2.9f1\Editor\Data\Tools\Unity.SourceGenerators\Unity.UIToolkit.SourceGenerator.dll" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Assets\Editor\PikafishImporter.cs" />
+    <Compile Include="Assets\Scripts\Editor\PiecePositionHelper.cs" />
     <Reference Include="UnityEngine">
       <HintPath>D:\Unity\Hub\6000.2.9f1\Editor\Data\Managed\UnityEngine\UnityEngine.dll</HintPath>
     </Reference>
