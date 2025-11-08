@@ -110,9 +110,7 @@ public class EngineController : MonoBehaviour
                     actualFen += " w - - 0 1";
             }
             
-            // Debug: log side to move để kiểm tra
-            string sideToMove = actualFen.Contains(" w ") ? "w (red)" : (actualFen.Contains(" b ") ? "b (black)" : "unknown");
-            Debug.Log($"[EngineController] position fen, side to move: {sideToMove}, FEN: {actualFen}");
+            Debug.Log($"[EngineController] position fen {actualFen}");
             Pikafish.Instance.SetPositionFEN(actualFen, movesCsv);
         }
         yield return null;
@@ -384,34 +382,9 @@ public class EngineController : MonoBehaviour
 
         // Build history CSV (full) nếu đã có nước đi
         string historyCsv = _moveHistory.Count > 0 ? string.Join(" ", _moveHistory) : null;
-        
-        // Kiểm tra nếu từ startpos → dùng startpos (theo logic flutter_android)
-        // Nếu không → dùng FEN và đảm bảo side to move đúng
-        bool isFromStartpos = IsFromStartpos(fenOrStartpos);
-        if (isFromStartpos)
-        {
-            // Từ startpos → dùng startpos (theo logic flutter_android)
-            Debug.Log($"[EngineController] position startpos {(historyCsv==null ? "(no moves)" : "(with moves)")}");
-            Pikafish.Instance.SetPositionFEN("startpos", historyCsv);
-        }
-        else
-        {
-            // Không từ startpos → dùng FEN và đảm bảo side to move đúng
-            string actualFen = fenOrStartpos;
-            if (!actualFen.Contains(" w ") && !actualFen.Contains(" b "))
-            {
-                // FEN thiếu side to move, thêm 'w' (đỏ đi trước) mặc định
-                if (actualFen.EndsWith(" -"))
-                    actualFen = actualFen.Replace(" -", " w -");
-                else
-                    actualFen += " w - - 0 1";
-            }
-            
-            // Debug: log side to move để kiểm tra
-            string sideToMove = actualFen.Contains(" w ") ? "w (red)" : (actualFen.Contains(" b ") ? "b (black)" : "unknown");
-            Debug.Log($"[EngineController] position fen {(historyCsv==null ? "(no moves)" : "(with moves)")}, side to move: {sideToMove}, FEN: {actualFen}");
-            Pikafish.Instance.SetPositionFEN(actualFen, historyCsv);
-        }
+        string fenFixed2 = fenOrStartpos;
+        Debug.Log($"[EngineController] position fen {(historyCsv==null ? "(no moves)" : "(with moves)")}: {fenFixed2}");
+        Pikafish.Instance.SetPositionFEN(fenFixed2, historyCsv);
         
         // Nhường 1 frame trước khi go
         yield return null;
