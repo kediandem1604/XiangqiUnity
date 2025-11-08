@@ -17,9 +17,6 @@ public class EngineController : MonoBehaviour
     
     // Tránh overlap các lần phân tích
     private bool _isAnalyzing = false;
-    
-    // Track move history để truyền moves khi dùng startpos (theo logic flutter_android)
-    private System.Collections.Generic.List<string> _moveHistory = new System.Collections.Generic.List<string>();
 
     private BestMoveArrow _arrow;
     private BoardFromRooks _grid;
@@ -69,12 +66,13 @@ public class EngineController : MonoBehaviour
         while (Pikafish.Instance == null)
             yield return null;
         
-        // Đợi NNUE sẵn sàng trước khi gửi lệnh (không timeout để đảm bảo chất lượng nước đầu)
-        while (!Pikafish.EvalReady)
+        // Đợi NNUE sẵn sàng trước khi gửi lệnh
+        float t0 = Time.realtimeSinceStartup;
+        while (!Pikafish.EvalReady && Time.realtimeSinceStartup - t0 < 3f)
             yield return null;
 
         // Đợi engine hoàn toàn sẵn sàng (native init + callbacks set)
-        float t0 = Time.realtimeSinceStartup;
+        t0 = Time.realtimeSinceStartup;
         while (!Pikafish.Instance.IsReady && Time.realtimeSinceStartup - t0 < 5f)
         {
             yield return null;
@@ -86,33 +84,23 @@ public class EngineController : MonoBehaviour
             yield break;
         }
 
-        // Kiểm tra nếu từ startpos → dùng startpos (theo logic flutter_android)
-        // Nếu không → dùng FEN
-        bool isFromStartpos = IsFromStartpos(fen);
-        if (isFromStartpos)
+        // Luôn dùng FEN Xiangqi thay vì "startpos" để tránh engine hiểu nhầm là cờ vua
+        bool isStart = (fen == STARTPOS_FEN || fen == "startpos");
+        string actualFen = isStart ? STARTPOS_FEN : fen;
+        
+        // KHÔNG force side to move ở đây - để BoardController quyết định side to move
+        // Chỉ đảm bảo FEN có side to move hợp lệ
+        if (!actualFen.Contains(" w ") && !actualFen.Contains(" b "))
         {
-            // Từ startpos → dùng startpos (theo logic flutter_android)
-            Debug.Log($"[EngineController] position startpos");
-            Pikafish.Instance.SetPositionFEN("startpos", movesCsv);
+            // FEN thiếu side to move, thêm 'b' (đen move trước) mặc định
+            if (actualFen.EndsWith(" -"))
+                actualFen = actualFen.Replace(" -", " b -");
+            else
+                actualFen += " b - - 0 1";
         }
-        else
-        {
-            // Không từ startpos → dùng FEN (theo logic flutter_android)
-            // KHÔNG force side to move - để BoardController quyết định side to move
-            // Chỉ đảm bảo FEN có side to move hợp lệ
-            string actualFen = fen;
-            if (!actualFen.Contains(" w ") && !actualFen.Contains(" b "))
-            {
-                // FEN thiếu side to move, thêm 'w' (đỏ đi trước) mặc định
-                if (actualFen.EndsWith(" -"))
-                    actualFen = actualFen.Replace(" -", " w -");
-                else
-                    actualFen += " w - - 0 1";
-            }
-            
-            Debug.Log($"[EngineController] position fen {actualFen}");
-            Pikafish.Instance.SetPositionFEN(actualFen, movesCsv);
-        }
+        
+        Debug.Log($"[EngineController] position fen {actualFen}");
+        Pikafish.Instance.SetPositionFEN(actualFen, movesCsv);
         yield return null;
         Pikafish.Instance.GoDepth(depth);
     }
@@ -137,13 +125,26 @@ public class EngineController : MonoBehaviour
         
         Debug.Log($"[EngineController] bestmove={bestMove} ponder={ponder}");
         
-        // Parse và hiển thị mũi tên (không chặn nếu validation thất bại để tránh bỏ lỡ bestmove hợp lệ từ engine)
+        // Validate bestmove theo Xiangqi rules (như flutter_android)
+        if (!IsValidBestMove(bestMove))
+        {
+            Debug.LogWarning($"[EngineController] Bestmove failed Xiangqi rules validation: {bestMove}");
+            return;
+        }
+        
+        // Parse và hiển thị mũi tên
         if (!TryParseMoveToGrid(bestMove, out int f1, out int r1, out int f2, out int r2))
         {
             Debug.LogWarning($"[EngineController] Cannot parse bestmove to grid: {bestMove}");
             return;
         }
-        // Không ép có quân tại from để không chặn hiển thị mũi tên
+        
+        // Validate có quân cờ ở vị trí from không
+        if (!ValidatePieceAtPosition(f1, r1))
+        {
+            Debug.LogWarning($"[EngineController] No piece at from position ({f1},{r1}) for bestmove: {bestMove}");
+            return;
+        }
         
         // Apply coordinate offsets nếu cần (để fix lệch 1 đơn vị)
         f1 += fileOffset;
@@ -287,72 +288,20 @@ public class EngineController : MonoBehaviour
     /// Gọi phân tích cho trạng thái bàn cờ mới sau mỗi lần di chuyển quân.
     /// Trình tự an toàn: stop -> set position -> go depth.
     /// </summary>
-    public void AnalyzeAfterMove(string fenOrStartpos, string movesCsv = null, string lastMoveUci = null)
+    public void AnalyzeAfterMove(string fenOrStartpos, string movesCsv)
     {
-        // Track move history (theo logic flutter_android)
-        // Nếu có lastMoveUci, thêm vào history
-        if (!string.IsNullOrWhiteSpace(lastMoveUci))
-        {
-            _moveHistory.Add(lastMoveUci);
-        }
-        
-        // Giữ nguyên "startpos" nếu là string literal, không convert ngay
-        // Logic kiểm tra startpos sẽ làm trong CoAnalyzeAfterMove
+        // Chuyển "startpos" thành FEN Xiangqi chuẩn
+        if (string.IsNullOrWhiteSpace(fenOrStartpos) || fenOrStartpos == "startpos")
+            fenOrStartpos = STARTPOS_FEN;
         StopAllCoroutines();
         StartCoroutine(CoAnalyzeAfterMove(fenOrStartpos, movesCsv));
-    }
-    
-    /// <summary>
-    /// Reset move history (khi bắt đầu ván mới - theo logic flutter_android).
-    /// </summary>
-    public void ResetMoveHistory()
-    {
-        _moveHistory.Clear();
-    }
-    
-    /// <summary>
-    /// Kiểm tra xem có phải là bàn cờ khởi đầu không (theo logic flutter_android).
-    /// Flutter: _isFromStartpos() => state.setupFen == null
-    /// Unity: kiểm tra bằng cách so sánh board position với STARTPOS_FEN.
-    /// </summary>
-    private bool IsFromStartpos(string fen)
-    {
-        if (string.IsNullOrWhiteSpace(fen))
-            return false;
-        
-        // Nếu là string literal "startpos"
-        if (fen.Equals("startpos", System.StringComparison.OrdinalIgnoreCase))
-            return true;
-        
-        // So sánh board position (phần đầu trước dấu cách) với STARTPOS_FEN
-        // Flutter dùng: _isFromStartpos() => state.setupFen == null
-        // Unity: so sánh board position để xác định
-        string[] fenParts = fen.Split(new[] { ' ' }, System.StringSplitOptions.RemoveEmptyEntries);
-        if (fenParts.Length == 0)
-            return false;
-        
-        string boardPart = fenParts[0];
-        string[] startPosParts = STARTPOS_FEN.Split(new[] { ' ' }, System.StringSplitOptions.RemoveEmptyEntries);
-        if (startPosParts.Length == 0)
-            return false;
-        
-        string startPosBoard = startPosParts[0];
-        
-        // So sánh board position (case-insensitive)
-        return boardPart.Equals(startPosBoard, System.StringComparison.OrdinalIgnoreCase);
     }
 
     System.Collections.IEnumerator CoAnalyzeAfterMove(string fenOrStartpos, string movesCsv)
     {
         // Gate: engine sẵn sàng
         float t0 = Time.realtimeSinceStartup;
-        while (Pikafish.Instance == null)
-            yield return null;
-        // Đợi native ready
-        while (!Pikafish.Instance.IsReady && Time.realtimeSinceStartup - t0 < 5f)
-            yield return null;
-        // Đợi NNUE sẵn sàng trước khi gửi position (đảm bảo log đúng thứ tự: NNUE → position)
-        while (!Pikafish.EvalReady)
+        while ((Pikafish.Instance == null || !Pikafish.Instance.IsReady) && Time.realtimeSinceStartup - t0 < 3f)
             yield return null;
         
         if (Pikafish.Instance == null || !Pikafish.Instance.IsReady)
@@ -368,23 +317,28 @@ public class EngineController : MonoBehaviour
         }
         _isAnalyzing = true;
         
-        // 2) Set position mới
-        // Quy ước:
-        // - Nước đầu (history==0): dùng FEN hiện tại, KHÔNG kèm moves
-        // - Các nước sau  (history>0): dùng FEN + full history
+        // 1) Stop search hiện tại (nếu có)
+        try { Debug.Log("[EngineController] AnalyzeAfterMove: stopping current search"); Pikafish.Instance.Stop(); } catch {}
+        // Nhường 1 frame để native thread kịp join
+        yield return null;
         
-        // Dừng search hiện tại khi đã có history để engine nhận position mới
-        if (_moveHistory.Count > 0)
+        // 2) Set position mới (luôn dùng FEN Xiangqi, không dùng "startpos")
+        // KHÔNG force side to move - để BoardController quyết định side to move đúng
+        // Chỉ đảm bảo FEN có side to move hợp lệ
+        string fenFixed = fenOrStartpos;
+        if (!fenFixed.Contains(" w ") && !fenFixed.Contains(" b "))
         {
-            try { Pikafish.Instance.Stop(); } catch {}
-            yield return null;
+            // FEN thiếu side to move, thêm 'b' (đen move trước) mặc định
+            if (fenFixed.EndsWith(" -"))
+                fenFixed = fenFixed.Replace(" -", " b -");
+            else
+                fenFixed += " b - - 0 1";
         }
-
-        // Build history CSV (full) nếu đã có nước đi
-        string historyCsv = _moveHistory.Count > 0 ? string.Join(" ", _moveHistory) : null;
-        string fenFixed2 = fenOrStartpos;
-        Debug.Log($"[EngineController] position fen {(historyCsv==null ? "(no moves)" : "(with moves)")}: {fenFixed2}");
-        Pikafish.Instance.SetPositionFEN(fenFixed2, historyCsv);
+        
+        // Debug: log side to move để kiểm tra
+        string sideToMove = fenFixed.Contains(" w ") ? "w (đỏ)" : "b (đen)";
+        Debug.Log($"[EngineController] AnalyzeAfterMove: position fen {fenFixed}, side to move={sideToMove}, moves=\"{movesCsv}\"");
+        Pikafish.Instance.SetPositionFEN(fenFixed, movesCsv);
         
         // Nhường 1 frame trước khi go
         yield return null;
@@ -409,9 +363,9 @@ public class EngineController : MonoBehaviour
 
     /// <summary>
     /// Parse bestmove từ UCI notation sang Unity grid coordinates.
-    /// UCI notation: files a-i, ranks 0-9.
-    /// Unity grid: files 0-8, ranks 0-9.
-    /// KHÔNG FLIP: dùng trực tiếp rank (ở đây 9 sẽ hiển thị trên cùng nếu Unity quy ước 9=top).
+    /// UCI notation: files a-i (0-8 từ trái qua phải), ranks 0-9 (0=dưới, 9=trên).
+    /// Unity grid: files 0-8 (từ trái qua phải), ranks 0-9 (0=dưới đen, 9=trên đỏ).
+    /// KHÔNG CẦN FLIP: UCI rank 0 = Unity rank 0 (dưới), UCI rank 9 = Unity rank 9 (trên).
     /// </summary>
     static bool TryParseMoveToGrid(string s, out int f1, out int r1, out int f2, out int r2)
     {
@@ -428,17 +382,22 @@ public class EngineController : MonoBehaviour
         }
         
         // Format 2: algebraic notation a0a9 (theo chuẩn UCI/Xiangqi)
-        // Dùng trực tiếp rank từ UCI → Unity
+        // UCI: '0' = bottom (rank 0), '9' = top (rank 9)
+        // Unity: rank 0 = dưới (đen), rank 9 = trên (đỏ)
+        // KHÔNG CẦN FLIP: UCI rank 0 = Unity rank 0 (dưới), UCI rank 9 = Unity rank 9 (trên)
         if (Regex.IsMatch(s, "^[a-i][0-9][a-i][0-9]$"))
         {
             // Parse files: a-i (0-8) - từ trái qua phải
             f1 = s[0] - 'a';
             f2 = s[2] - 'a';
             
-            // Parse UCI ranks: '0'-'9'
+            // Parse UCI ranks: '0'-'9' (0=dưới, 9=trên) - KHÔNG FLIP
+            // UCI rank 0 = Unity rank 0 (dưới, đen)
+            // UCI rank 9 = Unity rank 9 (trên, đỏ)
             int fromRankUci = int.Parse(s[1].ToString());
             int toRankUci = int.Parse(s[3].ToString());
             
+            // Dùng trực tiếp UCI rank (không flip)
             r1 = fromRankUci;
             r2 = toRankUci;
             
@@ -447,7 +406,8 @@ public class EngineController : MonoBehaviour
         }
         
         // Format 3: explicit rank 10 support: a10b10, a2b10, a10b3
-        // rank 10 map về 9
+        // UCI notation: rank 10 = rank 9 trong board (top)
+        // KHÔNG CẦN FLIP: UCI rank 10 = Unity rank 9 (top)
         if (Regex.IsMatch(s, @"^[a-i](10|[1-9])[a-i](10|[1-9])$"))
         {
             // Parse files: a-i (0-8) - từ trái qua phải
@@ -475,7 +435,9 @@ public class EngineController : MonoBehaviour
             else if (rightRankStart < s.Length)
                 rightRankUci = int.Parse(s[rightRankStart].ToString());
             
-            // Map 10→9 và dùng trực tiếp
+            // Convert sang Unity grid: rank 10 = rank 9 (top), KHÔNG FLIP
+            // UCI rank 10 = Unity rank 9 (top, đỏ)
+            // UCI rank 0-9 = Unity rank 0-9 (không flip)
             int leftRankBoard = (leftRankUci == 10) ? 9 : leftRankUci;
             int rightRankBoard = (rightRankUci == 10) ? 9 : rightRankUci;
             r1 = leftRankBoard;
@@ -490,7 +452,7 @@ public class EngineController : MonoBehaviour
 
     static bool InBoard(int f, int r) => f >= 0 && f <= 8 && r >= 0 && r <= 9;
 
-    // Dùng để so sánh/start khi cần bên dưới đi trước (side-to-move = b)
+    // Dùng để so sánh startpos chuẩn Xiangqi (chỉnh lại cho khớp với GenerateFen)
     const string STARTPOS_FEN = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR b - - 0 1";
     
     /// <summary>
