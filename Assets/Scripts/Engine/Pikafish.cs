@@ -171,15 +171,26 @@ public class Pikafish : MonoBehaviour
 
     System.Collections.IEnumerator DelayedInit()
     {
-        // Đợi frame đầu để Unity hoàn tất initialization
+        // Đợi nhiều frame để Unity hoàn toàn sẵn sàng và stack ổn định
         yield return null;
+        yield return null;
+        yield return new WaitForSeconds(0.1f); // Thêm delay 100ms để đảm bảo stack ổn định
         
-        // Initialize native engine (im lặng nếu thành công)
+        // Initialize native engine với try-catch kỹ lưỡng
         int init = 0;
         try 
         { 
+            Debug.Log("[Pikafish] Attempting to initialize native engine...");
             init = pika_init();
             _nativeReady = (init == 1);
+            if (_nativeReady)
+            {
+                Debug.Log("[Pikafish] Native engine initialized successfully");
+            }
+            else
+            {
+                Debug.LogError("[Pikafish] pika_init() returned 0 (failed)");
+            }
         }
         catch (System.DllNotFoundException ex) 
         { 
@@ -194,6 +205,11 @@ public class Pikafish : MonoBehaviour
         catch (System.AccessViolationException ex)
         {
             Debug.LogError($"[Pikafish] Access Violation (crash): {ex.Message}\n{ex.StackTrace}");
+            yield break;
+        }
+        catch (System.StackOverflowException ex)
+        {
+            Debug.LogError($"[Pikafish] Stack Overflow: {ex.Message}\n{ex.StackTrace}");
             yield break;
         }
         catch (System.Exception ex) 
@@ -392,25 +408,43 @@ public class Pikafish : MonoBehaviour
     /// </summary>
     private string GetEvalFilePath()
     {
-        // Ưu tiên: StreamingAssets/nn/pikafish.nnue (iOS/Android bundle)
+        // Ưu tiên 1: persistentDataPath/nn/pikafish.nnue (nơi PikafishBootstrap copy file đến)
+        string persistentPath = System.IO.Path.Combine(Application.persistentDataPath, "nn", "pikafish.nnue");
+        if (System.IO.File.Exists(persistentPath))
+        {
+            Debug.Log($"[Pikafish] Found NNUE in persistentDataPath: {persistentPath}");
+            return persistentPath;
+        }
+        
+        // Ưu tiên 2: StreamingAssets/nn/pikafish.nnue (iOS/Android bundle)
         string streamingPath = System.IO.Path.Combine(Application.streamingAssetsPath, "nn", "pikafish.nnue");
         
 #if UNITY_ANDROID && !UNITY_EDITOR
         // Android: StreamingAssets có thể cần extract từ APK
         // Unity tự xử lý, nhưng cần dùng full path
         if (System.IO.File.Exists(streamingPath))
+        {
+            Debug.Log($"[Pikafish] Found NNUE in StreamingAssets: {streamingPath}");
             return streamingPath;
+        }
 #elif UNITY_IOS && !UNITY_EDITOR
         // iOS: StreamingAssets bundle vào app, đọc được trực tiếp
         if (System.IO.File.Exists(streamingPath))
+        {
+            Debug.Log($"[Pikafish] Found NNUE in StreamingAssets: {streamingPath}");
             return streamingPath;
+        }
 #else
         // Editor/Windows: StreamingAssets hoặc fallback bên cạnh DLL
         if (System.IO.File.Exists(streamingPath))
+        {
+            Debug.Log($"[Pikafish] Found NNUE in StreamingAssets: {streamingPath}");
             return streamingPath;
+        }
 #endif
         
         // Fallback: file bên cạnh DLL (Windows) hoặc tên file đơn giản (engine tự tìm)
+        Debug.LogWarning($"[Pikafish] NNUE not found in StreamingAssets or persistentDataPath, using fallback: pikafish.nnue (engine will search in working directory)");
         return "pikafish.nnue";
     }
     
@@ -428,11 +462,33 @@ public class Pikafish : MonoBehaviour
             {
                 try
                 {
-                    var exists = System.IO.File.Exists(value);
-                    long size = exists ? new System.IO.FileInfo(value).Length : 0;
-                    EvalReady = exists && size > 0;
-                    if (!EvalReady)
-                        Debug.LogWarning($"[Pikafish] EvalFile not found: {value}");
+                    // Nếu là tên file đơn giản (không có đường dẫn), engine sẽ tự tìm trong working directory
+                    // Không cần kiểm tra File.Exists cho trường hợp này
+                    bool isSimpleFileName = !System.IO.Path.IsPathRooted(value) && 
+                                           !value.Contains(System.IO.Path.DirectorySeparatorChar) && 
+                                           !value.Contains(System.IO.Path.AltDirectorySeparatorChar);
+                    
+                    if (isSimpleFileName)
+                    {
+                        // Tên file đơn giản: engine sẽ tự tìm, không log warning
+                        Debug.Log($"[Pikafish] EvalFile set to simple filename: {value} (engine will search in working directory)");
+                        EvalReady = true; // Giả định engine sẽ tìm thấy
+                    }
+                    else
+                    {
+                        // Đường dẫn đầy đủ: kiểm tra file tồn tại
+                        var exists = System.IO.File.Exists(value);
+                        long size = exists ? new System.IO.FileInfo(value).Length : 0;
+                        EvalReady = exists && size > 0;
+                        if (EvalReady)
+                        {
+                            Debug.Log($"[Pikafish] EvalFile found: {value} (size: {size} bytes)");
+                        }
+                        else
+                        {
+                            Debug.LogWarning($"[Pikafish] EvalFile not found: {value}");
+                        }
+                    }
                 }
                 catch (System.Exception ex)
                 {
